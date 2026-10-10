@@ -1,0 +1,50 @@
+{
+	"schemaVersion": 1,
+	"id": "chunkheat",
+	"version": "${version}",
+	"name": "ChunkHeat",
+	"description": "Per-chunk MSPT heatmap. Draws on Xaero's World Map or JourneyMap (whichever is installed); only Fabric API is required.",
+	"authors": [
+		"Drizzle",
+		"ChunkHeat (JourneyMap port)"
+	],
+	"license": "MIT",
+	"icon": "assets/chunkheat/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"chunkheat.ChunkHeatMod"
+		],
+		"client": [
+			"chunkheat.client.ChunkHeatClient"
+		],
+		"modmenu": [
+			"chunkheat.client.ModMenuIntegration"
+		],
+		"journeymap": [
+			"chunkheat.compat.journeymap.ChunkHeatJourneyMapPlugin"
+		]
+	},
+	"mixins": [
+		"chunkheat.mixins.json",
+		{
+			"config": "chunkheat.client.mixins.json",
+			"environment": "client"
+		},
+		{
+			"config": "chunkheat.jm.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.16.0",
+		"minecraft": ">=1.21 <1.21.2",
+		"java": ">=21",
+		"fabric-api": "*"
+	},
+	"suggests": {
+		"xaeroworldmap": "*",
+		"journeymap": "*",
+		"modmenu": "*"
+	}
+}

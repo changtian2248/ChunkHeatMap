@@ -1,0 +1,11 @@
+{
+  "required": false,
+  "package": "chunkheat.compat.journeymap.mixins",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "FullscreenScrolledMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}

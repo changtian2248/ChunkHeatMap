@@ -1,0 +1,123 @@
+package chunkheat.client;
+
+import com.mojang.blaze3d.vertex.VertexConsumer;
+import chunkheat.sampler.TicketCode;
+import org.joml.Matrix4f;
+import xaero.map.graphics.MapRenderHelper;
+
+/**
+ * 往 Xaero 地图上绘制热力图。仅依赖 {@link ClientSnapshot} 与绘制参数，不涉及网络。
+ *
+ * <p>地图空间即当前维度的方块坐标（1 单位 = 1 格）：区块矩形由快照中的世界坐标减去相机偏移得到，
+ * 不做缩放。矩阵为 Xaero 当前帧已带好缩放平移的 PoseStack。
+ *
+ * <p>填色规则：测到过耗时 → 按 ms/tick 铺绿黄红；弱加载（加载等级 ≥32）且整段窗口无耗时 → 淡灰；
+ * 弱加载但测到过耗时 → 照常铺热力色。阈值与透明度每帧从 {@link ClientConfig} 现读。
+ */
+public final class MapOverlay {
+	/** 达到该加载等级即弱加载（与 {@code ChunkLevel.isBlockTicking} 的分界一致）。 */
+	private static final int WEAK_LOAD_LEVEL = 32;
+
+	/** 弱加载且无耗时区块的填充色与透明度。 */
+	private static final float IDLE_GRAY = 0.7f;
+	private static final float IDLE_ALPHA = 0.3f;
+
+	/** 加载源中心蓝框的颜色（不透明，与绿黄红热力色区分）。 */
+	private static final float CENTER_RED = 0.2f;
+	private static final float CENTER_GREEN = 0.5f;
+	private static final float CENTER_BLUE = 1.0f;
+
+	/** 蓝框宽度（世界格）：沿区块内沿一圈，压住最外圈的热力色。 */
+	private static final int CENTER_BORDER = 1;
+
+	/**
+	 * 黄点在红点上的位置（1/3）：颜色只保留红点一个可调参数，黄点由它推出，相对模式下同样跟随本次
+	 * 最重的区块。默认红阈值 1.5 时黄点为 0.50。
+	 */
+	private static final float YELLOW_KNEE = 1.0f / 3.0f;
+
+	private MapOverlay() {
+	}
+
+	/**
+	 * 绘制一个维度的热力图。参数均为 Xaero 当前帧的现成对象（见 {@code GuiMapMixin} 的注入点）。
+	 *
+	 * @param dimension 地图当前显示的维度，非玩家所在维度——切到地狱地图即绘制地狱的数据
+	 */
+	public static void draw(Matrix4f matrix, VertexConsumer buffer, int flooredCameraX, int flooredCameraZ,
+			String dimension) {
+		ClientSnapshot.Chunk[] chunks = ClientSnapshot.get(dimension);
+		if (chunks == null) {
+			return;
+		}
+
+		// 红点整帧只算一次
+		float redPoint = redPoint(ClientSnapshot.heaviestMspt(dimension));
+		for (ClientSnapshot.Chunk chunk : chunks) {
+			int x1 = chunk.x1() - flooredCameraX;
+			int z1 = chunk.z1() - flooredCameraZ;
+			int x2 = chunk.x2() - flooredCameraX;
+			int z2 = chunk.z2() - flooredCameraZ;
+
+			if (ClientConfig.showWeakGray && chunk.loadLevel() >= WEAK_LOAD_LEVEL && !chunk.timed()) {
+				MapRenderHelper.fillIntoExistingBuffer(matrix, buffer, x1, z1, x2, z2,
+						IDLE_GRAY, IDLE_GRAY, IDLE_GRAY, IDLE_ALPHA);
+				continue;
+			}
+			float mspt = chunk.mspt();
+			MapRenderHelper.fillIntoExistingBuffer(matrix, buffer, x1, z1, x2, z2,
+					red(mspt, redPoint), green(mspt, redPoint), 0.0f, (float) ClientConfig.fillAlpha);
+		}
+
+		// 加载源中心画蓝框：每个持有加载票的区块（传送门、末影珍珠、forceload、玩家位置……）。
+		// 两条链都查：纯加载票（player_spawn、spawn_search）只在加载链上，模拟票只在模拟链上，
+		// 同一区块同时命中两条链时也只画一次。单独一趟、画在填色之后：框沿区块内沿一圈，压在
+		// 热力色上不被盖住。
+		for (ClientSnapshot.Chunk chunk : chunks) {
+			if (!TicketCode.isCenter(chunk.loadTicket()) && !TicketCode.isCenter(chunk.simTicket())) {
+				continue;
+			}
+			int x1 = chunk.x1() - flooredCameraX;
+			int z1 = chunk.z1() - flooredCameraZ;
+			int x2 = chunk.x2() - flooredCameraX;
+			int z2 = chunk.z2() - flooredCameraZ;
+			centerBorder(matrix, buffer, x1, z1, x2, z2);
+		}
+	}
+
+	/** 沿区块内沿画一圈蓝框：上、下两条横边跨满，左、右两条竖边接在两横边之间。 */
+	private static void centerBorder(Matrix4f matrix, VertexConsumer buffer, int x1, int z1, int x2, int z2) {
+		MapRenderHelper.fillIntoExistingBuffer(matrix, buffer, x1, z1,
+				x2, z1 + CENTER_BORDER, CENTER_RED, CENTER_GREEN, CENTER_BLUE, 1.0f);
+		MapRenderHelper.fillIntoExistingBuffer(matrix, buffer, x1, z2 - CENTER_BORDER,
+				x2, z2, CENTER_RED, CENTER_GREEN, CENTER_BLUE, 1.0f);
+		MapRenderHelper.fillIntoExistingBuffer(matrix, buffer, x1, z1 + CENTER_BORDER,
+				x1 + CENTER_BORDER, z2 - CENTER_BORDER, CENTER_RED, CENTER_GREEN, CENTER_BLUE, 1.0f);
+		MapRenderHelper.fillIntoExistingBuffer(matrix, buffer, x2 - CENTER_BORDER, z1 + CENTER_BORDER,
+				x2, z2 - CENTER_BORDER, CENTER_RED, CENTER_GREEN, CENTER_BLUE, 1.0f);
+	}
+
+	/**
+	 * 当前帧的红点：耗时达到它即为最高等级的红。
+	 *
+	 * <p>固定模式（默认）取设置中的红色阈值，跨次可比；相对模式取当前显示维度、本次快照中最重的区块
+	 * （最重值由 {@link ClientSnapshot#accept} 预计算，见 {@link ClientSnapshot#heaviestMspt}）。
+	 * 无任何耗时测得时退回固定阈值，保证结果恒大于 0，可作分母。
+	 */
+	/** 红色阈值 / 黄点 / 斜坡的数学与旅行地图后端共用，见 {@link HeatColor}。 */
+	static float redPoint(float heaviest) {
+		return HeatColor.redPoint(heaviest);
+	}
+
+	static float yellowAt(float redPoint) {
+		return HeatColor.yellowAt(redPoint);
+	}
+
+	static float red(float mspt, float redPoint) {
+		return HeatColor.red(mspt, redPoint);
+	}
+
+	static float green(float mspt, float redPoint) {
+		return HeatColor.green(mspt, redPoint);
+	}
+}

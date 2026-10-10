@@ -1,0 +1,14 @@
+{
+  "required": true,
+  "package": "chunkheat.mixins",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "BoundTickingBlockEntityMixin",
+    "ChunkMapAccessor",
+    "NaturalSpawnerMixin",
+    "ServerLevelMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

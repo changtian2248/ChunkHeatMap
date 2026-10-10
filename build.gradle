@@ -1,0 +1,78 @@
+// ChunkHeat — per-chunk MSPT heatmap for Xaero's World Map and JourneyMap (MC 1.21.1, Fabric).
+//
+// 只硬依赖 Fabric API。Xaero 世界地图与旅行地图（JourneyMap）都是可选依赖：装了哪个就让哪个生效，
+// 都没装也能正常启动（客户端 Mixin 分别放在 required:false 的配置里，目标类缺失即静默跳过）。
+plugins {
+	id 'net.fabricmc.fabric-loom-remap' version "${loom_version}"
+}
+
+repositories {
+	// Xaero 世界地图及其前置库（作者官方 maven；仅编译期，运行时不打包，玩家自己装）
+	maven {
+		name = "Xaero's Maven"
+		url = 'https://chocolateminecraft.com/maven'
+	}
+	// Mod Menu（仅编译期；装了才有「模组菜单 → 设置」入口）
+	maven { url = 'https://maven.terraformersmc.com/releases/' }
+	// JourneyMap 官方 API（快照仓库）
+	maven {
+		name = 'JourneyMap'
+		url = 'https://jm.gserv.me/repository/maven-snapshots/'
+		content { includeGroup 'info.journeymap' }
+	}
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	mappings loom.officialMojangMappings()
+
+	modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+	// —— 可选依赖：全部 modCompileOnly，不写 depends、运行时不打包 ——
+	modCompileOnly("com.terraformersmc:modmenu:${project.modmenu_version}") { transitive = false }
+
+	// Xaero 世界地图 + 前置库（坐标自带 MC 版本后缀）
+	modCompileOnly("xaero.map:xaeroworldmap-fabric-${project.minecraft_version}:${project.xaero_worldmap_version}") {
+		transitive = false
+	}
+	modCompileOnly("xaero.lib:xaerolib-fabric-${project.minecraft_version}:${project.xaero_lib_version}") {
+		transitive = false
+	}
+
+	// 旅行地图官方 API（只用到其中的 v2 client API；运行时不打包，JourneyMap 自带）
+	modCompileOnly("info.journeymap:journeymap-api-fabric:${project.journeymap_api_version}") {
+		transitive = false
+	}
+
+	// MixinExtras：@Local 与 @WrapMethod 需要（Xaero 那侧的 Mixin 用到了），随包发一份
+	include(implementation("io.github.llamalad7:mixinextras-fabric:${project.mixinextras_version}"))
+}
+
+group = project.maven_group
+base.archivesName = project.archives_base_name
+version = project.mod_version
+
+processResources {
+	filteringCharset = "UTF-8"
+	def modVersion = project.mod_version
+	inputs.property "version", modVersion
+	filesMatching("fabric.mod.json") {
+		expand "version": modVersion
+	}
+	// mixins 配置里的 ${mixin_compat_level} 占位符：级别高于运行 JVM 时 mixin 会拒绝加载，
+	// 故跟随 java_release 填。漏填会让游戏在 Mixin 初始化阶段直接崩（"not recognised"）。
+	filesMatching(["chunkheat.mixins.json", "chunkheat.client.mixins.json", "chunkheat.jm.mixins.json"]) {
+		expand "mixin_compat_level": "JAVA_21"
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.encoding = "UTF-8"
+	it.options.release = 21
+}
+
+java {
+	sourceCompatibility = JavaVersion.VERSION_21
+	targetCompatibility = JavaVersion.VERSION_21
+}

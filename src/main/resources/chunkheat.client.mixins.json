@@ -1,0 +1,11 @@
+{
+  "required": false,
+  "package": "chunkheat.client.mixins",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "GuiMapMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}
