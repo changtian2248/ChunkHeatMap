@@ -89,9 +89,9 @@ original: <https://github.com/Drizzle379/MsptMap>
   - **Xaero backend**: a Mixin injects into Xaero's `GuiMap` render pass and fills the heatmap into
     its vertex buffer (ported from MsptMap).
   - **JourneyMap backend**: uses JourneyMap's official **v2 plugin API** — the heatmap is drawn in
-    `FullscreenRenderEvent` using `UIState`'s authoritative block↔pixel mapping
-    (`MapRenderer.getBlockPixelInGrid`: screen centre + `blockSize = zoom / 512`), buttons come from
-    `AddonButtonDisplayEvent`, and clicks from `FullscreenMapClickEvent`.
+    `FullscreenRenderEvent` using JourneyMap's own block↔pixel space (its `MapRenderer.getBlockPixelInGrid`
+    works in **physical/window pixels** via `Window.getScreenWidth()`, not GUI-scaled pixels), buttons come
+    from `AddonButtonDisplayEvent`, and clicks from `FullscreenMapClickEvent`.
 
 ## Known limitations / 已知限制
 

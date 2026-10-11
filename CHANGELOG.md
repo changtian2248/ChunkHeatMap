@@ -1,4 +1,16 @@
-# Changelog
+## 1.0.2
+
+### Fixed
+- **JourneyMap: heatmap still offset / the player not at the centre.** JourneyMap maps blocks to
+  pixels in **physical (window) pixels** — `MapRenderer.getBlockPixelInGrid` uses
+  `Window.getScreenWidth()/getScreenHeight()` — while this mod used `getGuiScaledWidth()/Height()`
+  (**GUI-scaled** pixels). The two differ by
+  `scaleFactor = JmUI.calculateScaleFactor() = guiScale × getScreenWidth()/getWidth()`.
+  - The block↔pixel mapping now uses the physical-pixel basis, anchored on JourneyMap's own
+    `getBlockPixelInGrid(0, 0)`.
+  - The hover tooltip converts the GUI mouse position with the same `scaleFactor`.
+- **JourneyMap: overview / source-list UI mis-scaled and clipped.** That UI is now drawn inside
+  `poseStack.scale(scaleFactor)` (it lives in GUI-scaled space).
 
 ## 1.0.1
 

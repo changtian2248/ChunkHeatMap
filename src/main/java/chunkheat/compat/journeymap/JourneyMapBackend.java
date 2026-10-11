@@ -46,18 +46,30 @@ import java.lang.reflect.Method;
  * 因为共用 {@link ClientSnapshot} 与 {@link ChunkTooltip} / {@link ScanSummary} 等界面类，两个后端
  * 的数据与文案完全一致。
  *
- * <p>世界坐标 → 屏幕坐标的换算必须与旅行地图自己的渲染一致。旅行地图的权威换算是
- * {@code MapRenderer.getBlockPixelInGrid}：以<b>屏幕中心</b>与<b>地图中心方块坐标</b>为基准，
- * 比例为 {@code blockSize = zoom / 512}（像素 / 方块）：
+ * <p><b>坐标系（关键）</b>：旅行地图全屏地图的方块↔像素换算 {@code MapRenderer.getBlockPixelInGrid}
+ * 用的是 {@code Window.getScreenWidth()/getScreenHeight()}（<b>窗口/物理像素</b>，即 {@code width}/{@code height}
+ * 字段），而<b>不是</b> {@code getGuiScaledWidth()/getGuiScaledHeight()}（GUI 缩放坐标）。两者相差
+ * {@code scaleFactor = JmUI.calculateScaleFactor()}（= {@code guiScale * getScreenWidth()/getWidth()}，
+ * 全屏时）倍。证据：{@code Fullscreen.method_25402}（点击）先做
+ * {@code new Point2D.Double(mouseX * scaleFactor, mouseY * scaleFactor)} 才交给渲染器。
+ *
+ * <p>换算（与旅行地图同式）：
  * <pre>
- *   px = 窗口宽 / 2 + (blockX - centerBlockX) * blockSize
- *   py = 窗口高 / 2 + (blockZ - centerBlockZ) * blockSize
+ *   px = getScreenWidth()  / 2 + blockX * blockSize + A   （A 为锚点，见下）
+ *   py = getScreenHeight() / 2 + blockZ * blockSize + C
  * </pre>
+ * 为万无一失，锚点直接取 {@code getBlockPixelInGrid(0,0)}（反射，精确）；取不到时退回
+ * {@code getScreenWidth()/2 - centerBlockX * blockSize}。斜率 {@code blockSize = zoom / 512} 取
+ * {@link UIState#blockSize}（= 渲染器的 {@code zoom / 512}）。
  *
  * <p>不能改用 {@link UIState#blockBounds} 反推：它在 {@code updateUIState} 里被向外扩张了 32 格
  * （{@code corner.offset(-32,0,-32)} / {@code offset(32,h,32)}），拿它当可见区左上角会造成整体偏移。
- * 同理 {@link UIState#displayBounds} 在无 viewport 时是 {@code (-32,-32,w+64,h+64)}，故面板锚点
- * 不能直接用它的原点。
+ * 同理 {@link UIState#displayBounds} 在无 viewport 时是 {@code (-32,-32,w+64,h+64)}。
+ *
+ * <p><b>UI（总览 / 源列表 / 悬停框 / 翻页钮）</b>：事件里的鼠标坐标是 GUI 缩放坐标，故这一整套 UI 在
+ * {@code poseStack.scale(scaleFactor)} 里按 GUI 坐标绘制——否则会被画小、位置也错（实机上左侧面板被
+ * 裁掉、文字变小正是此故）。进度圈例外：它贴旅行地图自己的按钮，而按钮坐标本就是物理像素，故在未缩放的
+ * 空间里画。
  *
  * <p>{@code centerBlockX/Z} 不在公开 API 里（{@code UIState.mapCenter} 只到整数方块），故反射读
  * {@code Fullscreen.mapRenderer} 的 {@code getCenterBlockX()/getCenterBlockZ()} 取精确值；取不到时
@@ -94,11 +106,23 @@ public final class JourneyMapBackend {
 	private static double frameCenterBlockZ;
 	private static double frameBlockSize;
 
-	/** 旅行地图的渲染器实例与取中心坐标的方法；反射只做一次，失败后不再重试。 */
+	/**
+	 * 本帧仿射换算 {@code px = affineAX + affineBX * blockX}、{@code py = affineAY + affineBY * blockZ}，
+	 * 以及 GUI 缩放坐标 → 物理像素的倍率（{@code JmUI.calculateScaleFactor()}）。
+	 */
+	private static double affineAX;
+	private static double affineAY;
+	private static double affineBX = 1.0;
+	private static double affineBY = 1.0;
+	private static double frameScaleFactor = 1.0;
+
+	/** 旅行地图的渲染器实例与反射句柄；只解析一次，失败后不再重试。 */
 	private static Object mapRenderer;
 	private static boolean rendererResolved;
 	private static Method methodCenterX;
 	private static Method methodCenterZ;
+	private static Method methodBlockPixel;
+	private static Method methodScaleFactor;
 
 	private JourneyMapBackend() {
 	}
@@ -151,20 +175,70 @@ public final class JourneyMapBackend {
 		int mouseY = event.getMouseY();
 		String dimension = Ids.id(state.dimension);
 
-		// 本帧的换算基准：与旅行地图 getBlockPixelInGrid 完全一致（屏幕中心 + 地图中心 + zoom/512）
+		// 本帧的换算基准（与旅行地图 getBlockPixelInGrid 同源：物理像素 + 地图中心 + zoom/512）
+		computeFrame(state);
+
+		applyPendingFocus(fullscreen, state);
+
+		// —— 地图空间（物理像素，未缩放）：热力图、蓝框、进度圈 ——
+		drawHeat(graphics, state, dimension);
+		drawCenterBorders(graphics, state, dimension);
+		drawScanRing(graphics);
+
+		// —— UI 空间：事件鼠标是 GUI 缩放坐标，整套 UI 缩放进同一空间绘制 ——
+		computePanelAnchors(state);
+		if (frameScaleFactor > 0.0 && Math.abs(frameScaleFactor - 1.0) > 1.0e-6) {
+			graphics.pose().pushPose();
+			graphics.pose().scale((float) frameScaleFactor, (float) frameScaleFactor, 1.0F);
+			drawTooltip(graphics, state, dimension, mouseX, mouseY);
+			drawPanels(graphics, mouseX, mouseY);
+			graphics.pose().popPose();
+		} else {
+			drawTooltip(graphics, state, dimension, mouseX, mouseY);
+			drawPanels(graphics, mouseX, mouseY);
+		}
+	}
+
+	/** 每帧刷新换算基准：反射取锚点（{@code getBlockPixelInGrid(0,0)}）与 GUI→物理倍率。 */
+	private static void computeFrame(UIState state) {
 		resolveRenderer();
 		frameCenterBlockX = centerBlockX(state);
 		frameCenterBlockZ = centerBlockZ(state);
 		frameBlockSize = state.blockSize;
+		frameScaleFactor = scaleFactor();
 
-		applyPendingFocus(fullscreen, state);
+		// 斜率即 blockSize；锚点直接取 getBlockPixelInGrid(0,0)（精确），取不到再用中心反推
+		double anchorX = screenWidth() / 2.0 - frameCenterBlockX * frameBlockSize;
+		double anchorY = screenHeight() / 2.0 - frameCenterBlockZ * frameBlockSize;
+		if (mapRenderer != null && methodBlockPixel != null) {
+			try {
+				Point2D.Double origin = (Point2D.Double) methodBlockPixel.invoke(mapRenderer, 0.0, 0.0);
+				anchorX = origin.x;
+				anchorY = origin.y;
+			} catch (Throwable ignored) {
+				// 退回用中心反推的锚点
+			}
+		}
+		affineAX = anchorX;
+		affineAY = anchorY;
+		affineBX = frameBlockSize;
+		affineBY = frameBlockSize;
+	}
 
-		drawHeat(graphics, state, dimension);
-		drawCenterBorders(graphics, state, dimension);
-		computePanelAnchors(state);
-		drawScanRing(graphics);
-		drawTooltip(graphics, state, dimension, mouseX, mouseY);
-		drawPanels(graphics, mouseX, mouseY);
+	/** GUI 缩放坐标 → 物理像素的倍率（{@code JmUI.calculateScaleFactor()}；取不到时用窗口宽高反推）。 */
+	private static double scaleFactor() {
+		if (methodScaleFactor != null) {
+			try {
+				double factor = (double) methodScaleFactor.invoke(null);
+				if (factor > 0.0) {
+					return factor;
+				}
+			} catch (Throwable ignored) {
+				// 用下面的反推
+			}
+		}
+		int gui = guiScaledWidth();
+		return gui > 0 ? (double) screenWidth() / gui : 1.0;
 	}
 
 	/** 热力图：每个区块一个按屏幕坐标铺的色块。 */
@@ -174,8 +248,8 @@ public final class JourneyMapBackend {
 			return;
 		}
 		float redPoint = HeatColor.redPoint(ClientSnapshot.heaviestMspt(dimension));
-		int screenW = Minecraft.getInstance().getWindow().getGuiScaledWidth();
-		int screenH = Minecraft.getInstance().getWindow().getGuiScaledHeight();
+		int screenW = screenWidth();
+		int screenH = screenHeight();
 
 		RenderSystem.enableBlend();
 		try {
@@ -256,9 +330,11 @@ public final class JourneyMapBackend {
 		if (ClientSnapshot.get(dimension) == null) {
 			return;
 		}
-		// 屏幕 → 世界：getBlockPixelInGrid 的逆变换（同一套基准）
-		double worldX = frameCenterBlockX + (mouseX - windowWidth() / 2.0) / frameBlockSize;
-		double worldZ = frameCenterBlockZ + (mouseY - windowHeight() / 2.0) / frameBlockSize;
+		// 屏幕 → 世界：仿射的逆变换。事件鼠标是 GUI 缩放坐标，先乘倍率换算到物理像素
+		double pixelX = mouseX * frameScaleFactor;
+		double pixelY = mouseY * frameScaleFactor;
+		double worldX = affineBX == 0.0 ? frameCenterBlockX : (pixelX - affineAX) / affineBX;
+		double worldZ = affineBY == 0.0 ? frameCenterBlockZ : (pixelY - affineAY) / affineBY;
 		int chunkX = Mth.floor(worldX) >> 4;
 		int chunkZ = Mth.floor(worldZ) >> 4;
 		ChunkTooltip.draw(graphics, mouseX, mouseY, ChunkTooltip.lines(
@@ -380,7 +456,7 @@ public final class JourneyMapBackend {
 
 	// —— 几何与工具 ——
 
-	/** 反射取得旅行地图渲染器及其中心方块坐标的取值方法；只尝试一次。 */
+	/** 反射取得旅行地图渲染器及其换算方法；只尝试一次。 */
 	private static void resolveRenderer() {
 		if (rendererResolved) {
 			return;
@@ -397,8 +473,15 @@ public final class JourneyMapBackend {
 			mapRenderer = renderer;
 			methodCenterX = renderer.getClass().getMethod("getCenterBlockX");
 			methodCenterZ = renderer.getClass().getMethod("getCenterBlockZ");
+			methodBlockPixel = renderer.getClass().getMethod("getBlockPixelInGrid", double.class, double.class);
 		} catch (Throwable t) {
-			ChunkHeatMod.LOGGER.warn("ChunkHeat：取不到旅行地图渲染器的中心坐标，改用 UIState 中心近似（误差 < 1 格）", t);
+			ChunkHeatMod.LOGGER.warn("ChunkHeat：取不到旅行地图渲染器的坐标换算方法，改用 UIState 近似", t);
+		}
+		try {
+			Class<?> jmUi = Class.forName("journeymap.client.ui.component.screens.JmUI");
+			methodScaleFactor = jmUi.getMethod("calculateScaleFactor");
+		} catch (Throwable t) {
+			ChunkHeatMod.LOGGER.warn("ChunkHeat：取不到旅行地图的 scaleFactor，改用窗口宽高反推", t);
 		}
 	}
 
@@ -426,22 +509,32 @@ public final class JourneyMapBackend {
 		return state.mapCenter != null ? state.mapCenter.getZ() : 0.0;
 	}
 
-	private static int windowWidth() {
+	/**
+	 * 旅行地图方块↔像素空间用的宽度：{@code Window.getScreenWidth()}（字段 {@code width}，物理像素），
+	 * 与 {@code MapRenderer.getBlockPixelInGrid} 内部所取一致。<b>不是</b> {@code getGuiScaledWidth()}。
+	 */
+	private static int screenWidth() {
+		return Minecraft.getInstance().getWindow().getScreenWidth();
+	}
+
+	/** 同 {@link #screenWidth()}，{@code Window.getScreenHeight()}。 */
+	private static int screenHeight() {
+		return Minecraft.getInstance().getWindow().getScreenHeight();
+	}
+
+	/** GUI 缩放坐标空间宽度（UI 那一套用它）。 */
+	private static int guiScaledWidth() {
 		return Minecraft.getInstance().getWindow().getGuiScaledWidth();
 	}
 
-	private static int windowHeight() {
-		return Minecraft.getInstance().getWindow().getGuiScaledHeight();
-	}
-
-	/** 方块坐标 → 屏幕像素 X（与 {@code MapRenderer.getBlockPixelInGrid} 同式）。 */
+	/** 方块坐标 → 物理像素 X。 */
 	private static int screenX(double worldX) {
-		return (int) Math.round(windowWidth() / 2.0 + (worldX - frameCenterBlockX) * frameBlockSize);
+		return (int) Math.round(affineAX + affineBX * worldX);
 	}
 
-	/** 方块坐标 → 屏幕像素 Y（同上）。 */
+	/** 方块坐标 → 物理像素 Y。 */
 	private static int screenY(double worldZ) {
-		return (int) Math.round(windowHeight() / 2.0 + (worldZ - frameCenterBlockZ) * frameBlockSize);
+		return (int) Math.round(affineAY + affineBY * worldZ);
 	}
 
 	private static ResourceKey<Level> dimensionKey(String dimension) {
