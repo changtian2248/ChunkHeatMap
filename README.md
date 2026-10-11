@@ -65,7 +65,7 @@ original: <https://github.com/Drizzle379/MsptMap>
 ## Installation / 安装
 
 1. Install **Fabric Loader** (≥ 0.16) and **Fabric API** for 1.21.1.
-2. Drop `ChunkHeat-1.0.1.jar` into your `mods/` folder.
+2. Drop `ChunkHeat-1.0.3.jar` into your `mods/` folder.
 3. (Optional) Install **Xaero's World Map** and/or **JourneyMap** to see the heatmap.
 4. (Recommended) Install the same jar on the **server** — sampling, the `/chunkheat` command, scan
    permissions and the MSPT monitor all need the server side. A client-only install will report
@@ -88,10 +88,12 @@ original: <https://github.com/Drizzle379/MsptMap>
 - **Client side** stores the snapshot and draws it on the map.
   - **Xaero backend**: a Mixin injects into Xaero's `GuiMap` render pass and fills the heatmap into
     its vertex buffer (ported from MsptMap).
-  - **JourneyMap backend**: uses JourneyMap's official **v2 plugin API** — the heatmap is drawn in
-    `FullscreenRenderEvent` using JourneyMap's own block↔pixel space (its `MapRenderer.getBlockPixelInGrid`
-    works in **physical/window pixels** via `Window.getScreenWidth()`, not GUI-scaled pixels), buttons come
-    from `AddonButtonDisplayEvent`, and clicks from `FullscreenMapClickEvent`.
+  - **JourneyMap backend**: uses JourneyMap's official **v2 plugin API** — the heatmap is rendered as one
+    `PolygonOverlay` per chunk, so JourneyMap itself projects it into its map space and alignment is
+    guaranteed at every zoom / pan. Hover and click-to-locate use `IOverlayListener`, which hands back the
+    authoritative `BlockPos`, so no coordinate math is done by this mod. Buttons come from
+    `AddonButtonDisplayEvent`; screen-space UI (overview / source list / scan ring) is drawn in
+    `FullscreenRenderEvent` with the PoseStack reset to identity, isolating it from JourneyMap's transforms.
 
 ## Known limitations / 已知限制
 
@@ -102,6 +104,9 @@ original: <https://github.com/Drizzle379/MsptMap>
 - JourneyMap's API has **no scroll event**, so the source-list wheel is implemented with a small
   Mixin into JourneyMap's fullscreen screen (`chunkheat.jm.mixins.json`, `required: false`). Paging
   buttons are provided as well, so the feature still works if that Mixin ever stops applying.
+- On JourneyMap, one `PolygonOverlay` is created per scanned chunk. Very large scans (many thousands
+  of chunks) can cause a brief pause while the overlays are (re)built — this happens once per scan, or
+  when a colour / display-order setting changes, never every frame.
 
 ## Building / 构建
 

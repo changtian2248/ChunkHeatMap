@@ -1,5 +1,7 @@
 package chunkheat.compat.journeymap;
 
+import chunkheat.client.ClientConfig;
+import chunkheat.client.ClientSnapshot;
 import journeymap.api.v2.client.IClientAPI;
 import journeymap.api.v2.client.IClientPlugin;
 import journeymap.api.v2.common.JourneyMapPlugin;
@@ -16,6 +18,14 @@ public class ChunkHeatJourneyMapPlugin implements IClientPlugin {
 	@Override
 	public void initialize(IClientAPI jmClientApi) {
 		JourneyMapBackend.install(jmClientApi);
+		// 清屏时按用户设置立即移除 overlay
+		ClientSnapshot.setClearHook(() -> {
+			if (ClientConfig.clearOverlaysImmediately) {
+				JourneyMapBackend.clearOverlays();
+			}
+		});
+		// 显示层级 / 颜色设置改变时立即重建 overlay
+		ClientConfig.overlayRebuildHook = JourneyMapBackend::forceRebuild;
 	}
 
 	@Override

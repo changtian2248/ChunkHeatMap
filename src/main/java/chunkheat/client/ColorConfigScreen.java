@@ -3,6 +3,7 @@ package chunkheat.client;
 import chunkheat.util.Clamp;
 import chunkheat.util.Decimals;
 import net.minecraft.client.gui.components.AbstractSliderButton;
+import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
@@ -19,7 +20,9 @@ class ColorConfigScreen extends ConfigScreenBase {
 	private static final int MIN_LABEL_WIDTH = 84;
 	/** 行标签的语言键；最长者的宽度决定控件起始 x。 */
 	private static final List<String> ROW_LABELS = List.of(
-			"chunkheat.config.red_at", "chunkheat.config.opacity");
+			"chunkheat.config.red_at", "chunkheat.config.opacity", "chunkheat.config.overlay_order");
+	/** JourneyMap 叠加层显示层级可选值。 */
+	private static final int[] OVERLAY_ORDERS = {0, 100, 1000, 2000};
 	/** 滑块的最大宽度（窗口过窄时压窄）。 */
 	private static final int CONTROL_WIDTH = 150;
 	private static final int MIN_CONTROL_WIDTH = 60;
@@ -43,13 +46,17 @@ class ColorConfigScreen extends ConfigScreenBase {
 						value -> {
 							ClientConfig.relativeColor = value;
 							redSlider.active = !value;
+							triggerOverlayRebuild();
 						})),
 				new Row(ROW, (x, y) -> {
 					addRowLabel(Component.translatable("chunkheat.config.red_at"), x, y);
 					redSlider = addSlider(x + labelWidth, y, control,
 							ClientConfig.MIN_RED_AT, ClientConfig.MAX_RED_AT, ClientConfig.redAt,
 							value -> Decimals.format2(value) + " mspt",
-							value -> ClientConfig.redAt = value,
+							value -> {
+								ClientConfig.redAt = value;
+								triggerOverlayRebuild();
+							},
 							Component.translatable("chunkheat.config.red_at_tooltip"));
 					// 勾选相对模式时红点由数据决定，该滑块不参与，直接禁用
 					redSlider.active = !ClientConfig.relativeColor;
@@ -58,13 +65,68 @@ class ColorConfigScreen extends ConfigScreenBase {
 					addRowLabel(Component.translatable("chunkheat.config.opacity"), x, y);
 					addSlider(x + labelWidth, y, control, ClientConfig.MIN_FILL_ALPHA, 1.0,
 							ClientConfig.fillAlpha, Decimals::format2,
-							value -> ClientConfig.fillAlpha = value,
+							value -> {
+								ClientConfig.fillAlpha = value;
+								triggerOverlayRebuild();
+							},
 							Component.translatable("chunkheat.config.opacity_tooltip"));
 				}),
 				new Row(ROW, (x, y) -> addCheckbox(x, y, Component.translatable("chunkheat.config.weak"),
 						ClientConfig.showWeakGray,
 						Component.translatable("chunkheat.config.weak_tooltip"),
-						value -> ClientConfig.showWeakGray = value)))));
+						value -> {
+							ClientConfig.showWeakGray = value;
+							triggerOverlayRebuild();
+						})),
+				new Row(ROW, (x, y) -> {
+					addRowLabel(Component.translatable("chunkheat.config.overlay_order"), x, y);
+					addOverlayOrderButton(x + labelWidth, y, control);
+				}),
+				new Row(ROW, (x, y) -> addCheckbox(x, y, Component.translatable("chunkheat.config.clear_immediately"),
+						ClientConfig.clearOverlaysImmediately,
+						Component.translatable("chunkheat.config.clear_immediately_tooltip"),
+						value -> ClientConfig.clearOverlaysImmediately = value)))));
+	}
+
+	/** 叠加层显示层级循环按钮：点击在预设值之间切换。 */
+	private void addOverlayOrderButton(int x, int y, int buttonWidth) {
+		Button button = Button.builder(overlayOrderLabel(), b -> {
+					ClientConfig.overlayDisplayOrder = nextOverlayOrder(ClientConfig.overlayDisplayOrder);
+					b.setMessage(overlayOrderLabel());
+					triggerOverlayRebuild();
+				})
+				.bounds(x, y, buttonWidth, WIDGET_HEIGHT)
+				.tooltip(Tooltip.create(Component.translatable("chunkheat.config.overlay_order_tooltip")))
+				.build();
+		addRenderableWidget(button);
+	}
+
+	/** 通知 JourneyMap 后端按新设置立即重建 overlay；未装旅行地图时为空操作。 */
+	private static void triggerOverlayRebuild() {
+		if (ClientConfig.overlayRebuildHook != null) {
+			ClientConfig.overlayRebuildHook.run();
+		}
+	}
+
+	/** 当前显示层级对应的显示文本。 */
+	private static Component overlayOrderLabel() {
+		String key = switch (ClientConfig.overlayDisplayOrder) {
+				case 0 -> "chunkheat.config.overlay_order.under_map";
+				case 100 -> "chunkheat.config.overlay_order.below_labels";
+				case 2000 -> "chunkheat.config.overlay_order.above_labels";
+				default -> "chunkheat.config.overlay_order.default";
+		};
+		return Component.translatable(key);
+	}
+
+	/** 切换到下一个预设层级，非法值回到默认 1000。 */
+	private static int nextOverlayOrder(int current) {
+		for (int i = 0; i < OVERLAY_ORDERS.length; i++) {
+				if (OVERLAY_ORDERS[i] == current) {
+					return OVERLAY_ORDERS[(i + 1) % OVERLAY_ORDERS.length];
+				}
+		}
+		return 1000;
 	}
 
 	/** 行标签宽度：取当前语言中最长者（英文标签通常更宽）。 */

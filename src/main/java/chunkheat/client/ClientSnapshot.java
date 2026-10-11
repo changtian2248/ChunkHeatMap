@@ -1,5 +1,6 @@
 package chunkheat.client;
 
+import chunkheat.ChunkHeatMod;
 import chunkheat.net.SnapshotCodec;
 import chunkheat.sampler.TickCategory;
 import chunkheat.sampler.TicketCode;
@@ -99,6 +100,12 @@ public final class ClientSnapshot {
 	/** 总览的合计（三个维度一并累加）；未扫描、已清屏时为 null。 */
 	private static Totals totals;
 
+	/** 快照代次：每次接受新扫描或清屏时递增，让 JourneyMap 等后端知道何时重建 overlay。 */
+	private static long generation;
+
+	/** 清屏钩子：由 JourneyMap 后端在安装时设置，用于立即移除 overlay（可选行为）。 */
+	private static Runnable clearHook;
+
 	private ClientSnapshot() {
 	}
 
@@ -112,6 +119,7 @@ public final class ClientSnapshot {
 	 * @param tickNanos   窗口内各 tick 耗时之和（服务端所量），总览的「区块合计占整 tick」用；0 = 未量到
 	 */
 	public static void accept(int windowTicks, long tickNanos, List<SnapshotCodec.DimensionData> dimensions) {
+		generation++;
 		int window = Math.max(1, windowTicks);
 		ClientSnapshot.windowTicks = window;
 		byDimension.clear();
@@ -189,6 +197,14 @@ public final class ClientSnapshot {
 		heaviestByDimension.clear();
 		totals = null;
 		windowTicks = 0;
+		generation++;
+		if (clearHook != null) {
+			try {
+				clearHook.run();
+			} catch (Throwable t) {
+				ChunkHeatMod.LOGGER.warn("ChunkHeat：清屏钩子执行失败", t);
+			}
+		}
 		return dropped;
 	}
 
@@ -237,6 +253,20 @@ public final class ClientSnapshot {
 	public static float heaviestMspt(String dimension) {
 		Float heaviest = heaviestByDimension.get(dimension);
 		return heaviest == null ? 0.0f : heaviest;
+	}
+
+	/**
+	 * 当前快照代次，用于后端判断数据是否已更新。
+	 */
+	public static long generation() {
+		return generation;
+	}
+
+	/**
+	 * 设置清屏钩子；由 JourneyMap 后端在安装时注册，未安装旅行地图时不会调用。
+	 */
+	public static void setClearHook(Runnable hook) {
+		clearHook = hook;
 	}
 
 	/**

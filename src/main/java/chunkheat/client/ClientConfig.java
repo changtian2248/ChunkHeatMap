@@ -59,6 +59,15 @@ public final class ClientConfig {
 	/** 弱加载（加载等级 ≥32）且整段窗口无耗时的区块是否铺淡灰。 */
 	public static boolean showWeakGray;
 
+	/** JourneyMap 热力图叠加层的显示层级（displayOrder）。 */
+	public static int overlayDisplayOrder;
+
+	/** JourneyMap 清屏时是否立即移除 overlay（否则等到下次渲染地图时才移除）。 */
+	public static boolean clearOverlaysImmediately;
+
+	/** overlay 外观/层级改变时的回调；由 JourneyMap 后端设置，用于立即重建。 */
+	public static Runnable overlayRebuildHook;
+
 	/** 地图上那框扫描总览是否展开；由折叠钮翻转，跨次记忆（见 {@link ScanSummary}）。 */
 	public static boolean summaryExpanded;
 
@@ -115,6 +124,10 @@ public final class ClientConfig {
 		options.add(new DecimalValue("color.fillAlpha", MIN_FILL_ALPHA, 1.0,
 				() -> fillAlpha, value -> fillAlpha = value));
 		options.add(new Flag("color.showWeakGray", () -> showWeakGray, value -> showWeakGray = value));
+		options.add(new IntValue("overlay.order", 0, 10000,
+				() -> overlayDisplayOrder, value -> overlayDisplayOrder = value));
+		options.add(new Flag("overlay.clear_immediately", () -> clearOverlaysImmediately,
+				value -> clearOverlaysImmediately = value));
 		options.add(new Flag("summary.expanded", () -> summaryExpanded, value -> summaryExpanded = value));
 		options.add(new Flag("summary.colored", () -> summaryColored, value -> summaryColored = value));
 		options.add(new Flag("tooltip.coords", () -> tooltipCoords, value -> tooltipCoords = value));
@@ -140,6 +153,8 @@ public final class ClientConfig {
 		relativeColor = false;
 		fillAlpha = 0.35;
 		showWeakGray = true;
+		overlayDisplayOrder = 1000;
+		clearOverlaysImmediately = false;
 		summaryExpanded = true;
 		summaryColored = true;
 		tooltipCoords = true;
@@ -250,6 +265,18 @@ public final class ClientConfig {
 		for (Option option : OPTIONS) {
 			option.clamp();
 		}
+		overlayDisplayOrder = nearestOverlayOrder(overlayDisplayOrder);
+	}
+
+	/** overlay 显示层级只允许固定几档，非法值回到默认 1000。 */
+	private static int nearestOverlayOrder(int value) {
+		int[] allowed = {0, 100, 1000, 2000};
+		for (int allowedValue : allowed) {
+			if (allowedValue == value) {
+				return value;
+			}
+		}
+		return 1000;
 	}
 
 	/** 一项配置的描述符：键名、类型与区间，以及对该静态字段的读写。 */

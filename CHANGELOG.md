@@ -1,3 +1,22 @@
+## 1.0.3
+
+### Fixed
+- **JourneyMap: heatmap offset / magnified / drifted on zoom or drag.** The previous backend drew the
+  heatmap by hand inside `FullscreenRenderEvent`, which fights JourneyMap's own transform/coordinate
+  pipeline. The heatmap is now rendered as one `PolygonOverlay` per chunk via JourneyMap's official v2
+  plugin API, so JourneyMap itself projects and draws it — alignment with the base map is guaranteed.
+- **JourneyMap: tooltip and click-to-locate now use `IOverlayListener`.** The listener hands back the
+  authoritative `BlockPos`, removing the need for fragile inverse coordinate math.
+- **JourneyMap: overview / source-list / scan-ring UI could be affected by leftover PoseStack transforms.**
+  Screen-space UI is now drawn with the `GuiGraphics` PoseStack reset to identity, isolating it from
+  any transform JourneyMap may have left on the stack.
+
+### Added
+- **JourneyMap overlay display order setting** (`Colors` settings page): choose from four preset draw
+  orders (under map, below labels, default, above labels). Default is 1000.
+- **JourneyMap immediate clear setting** (`Colors` settings page): when on, overlays are removed
+  immediately upon pressing Clear; when off, removal happens on the next map render. Default is off.
+
 ## 1.0.2
 
 ### Fixed
